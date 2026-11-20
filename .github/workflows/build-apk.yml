@@ -1,0 +1,39 @@
+
+name: Construir APK KONTA
+
+on:
+  push:
+    branches:
+      - principal
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Obter codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Criar estrutura Android
+        run: flutter create --platforms=android --org ao.konta .
+
+      - name: Instalar dependencias
+        run: flutter pub get
+
+      - name: Compilar APK
+        run: flutter build apk --release
+
+      - name: Guardar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KONTA-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
