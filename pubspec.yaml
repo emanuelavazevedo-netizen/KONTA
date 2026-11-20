@@ -1,8 +1,9 @@
+
 name: konta
-description: Aplicacao de gestao financeira para empresarios em Angola.
+description: Gestao financeira empresarial para Angola.
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 2.0.0+2
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -13,6 +14,7 @@ dependencies:
   sqflite: ^2.4.2
   path: ^1.9.1
   intl: ^0.20.2
+  flutter_secure_storage: ^9.2.4
 
 dev_dependencies:
   flutter_test:
