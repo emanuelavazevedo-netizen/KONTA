@@ -333,3 +333,589 @@ class _AcessoKontaState extends State<AcessoKonta> {
     );
   }
 }
+// ======================================================
+// PAINEL PRINCIPAL
+// ======================================================
+
+class PainelKonta extends StatefulWidget {
+  const PainelKonta({super.key});
+
+  @override
+  State<PainelKonta> createState() => _PainelKontaState();
+}
+
+class _PainelKontaState extends State<PainelKonta> {
+  int pagina = 0;
+  List<Map<String, dynamic>> movimentos = [];
+  bool aCarregar = true;
+  bool ocultarSaldo = false;
+  String filtro = 'Todos';
+
+  @override
+  void initState() {
+    super.initState();
+    carregar();
+  }
+
+  Future<void> carregar() async {
+    final dados = await KontaDatabase.listar();
+
+    if (!mounted) return;
+
+    setState(() {
+      movimentos = dados;
+      aCarregar = false;
+    });
+  }
+
+  double get totalEntradas {
+    return movimentos
+        .where((m) => m['tipo'] == 'Entrada')
+        .fold(0.0, (soma, m) => soma + (m['valor'] as num).toDouble());
+  }
+
+  double get totalSaidas {
+    return movimentos
+        .where((m) => m['tipo'] == 'Saída')
+        .fold(0.0, (soma, m) => soma + (m['valor'] as num).toDouble());
+  }
+
+  double get saldo => totalEntradas - totalSaidas;
+
+  String moeda(double valor) {
+    return '${formatoMoeda.format(valor)} Kz';
+  }
+
+  Future<void> abrirFormulario({Map<String, dynamic>? movimento}) async {
+    await showDialog(
+      context: context,
+      builder: (_) => DialogoMovimento(movimento: movimento),
+    );
+    await carregar();
+  }
+
+  Future<void> eliminarMovimento(int id) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Eliminar movimento?'),
+        content: const Text(
+          'Tem a certeza de que pretende eliminar este registo?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar == true) {
+      await KontaDatabase.eliminar(id);
+      await carregar();
+    }
+  }
+
+  Widget cartaoResumo(
+    String titulo,
+    double valor,
+    IconData icone,
+    Color cor,
+  ) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icone, color: cor, size: 25),
+            const SizedBox(height: 10),
+            Text(
+              titulo,
+              style: const TextStyle(
+                color: Colors.grey,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              ocultarSaldo ? '••••••' : moeda(valor),
+              style: TextStyle(
+                color: cor,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget painelInicio() {
+    return RefreshIndicator(
+      onRefresh: carregar,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Olá, bem-vindo!',
+                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                  Text(
+                    'Resumo financeiro',
+                    style: TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              IconButton(
+                tooltip: ocultarSaldo ? 'Mostrar saldo' : 'Ocultar saldo',
+                onPressed: () {
+                  setState(() => ocultarSaldo = !ocultarSaldo);
+                },
+                icon: Icon(
+                  ocultarSaldo ? Icons.visibility_off : Icons.visibility,
+                  color: verde,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: verde,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'SALDO DISPONÍVEL',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  ocultarSaldo ? '••••••••' : moeda(saldo),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 27,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Controlo simples das suas finanças',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              cartaoResumo(
+                'Entradas',
+                totalEntradas,
+                Icons.arrow_downward,
+                Colors.green,
+              ),
+              const SizedBox(width: 12),
+              cartaoResumo(
+                'Saídas',
+                totalSaidas,
+                Icons.arrow_upward,
+                Colors.red,
+              ),
+            ],
+          ),
+          const SizedBox(height: 25),
+          const Text(
+            'Movimentos recentes',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          if (movimentos.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(25),
+              child: Center(
+                child: Text(
+                  'Ainda não existem movimentos registados.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
+            )
+          else
+            ...movimentos.take(5).map((m) => cartaoMovimento(m)),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: () => abrirFormulario(),
+              icon: const Icon(Icons.add),
+              label: const Text('Novo movimento'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: verde,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          const Center(
+            child: Text(
+              'Desenvolvido por Emanuel Azevedo',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget cartaoMovimento(Map<String, dynamic> m) {
+    final entrada = m['tipo'] == 'Entrada';
+    final cor = entrada ? Colors.green : Colors.red;
+    final id = (m['id'] as num).toInt();
+
+    return Card(
+      color: Colors.white,
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 9),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: cor.withValues(alpha: 0.12),
+          child: Icon(
+            entrada ? Icons.arrow_downward : Icons.arrow_upward,
+            color: cor,
+          ),
+        ),
+        title: Text(
+          m['descricao']?.toString() ?? '',
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          '${m['categoria'] ?? 'Geral'} • ${m['data'] ?? ''}',
+        ),
+        trailing: PopupMenuButton<String>(
+          onSelected: (opcao) {
+            if (opcao == 'editar') {
+              abrirFormulario(movimento: m);
+            } else if (opcao == 'eliminar') {
+              eliminarMovimento(id);
+            }
+          },
+          itemBuilder: (_) => const [
+            PopupMenuItem(
+              value: 'editar',
+              child: Text('Editar'),
+            ),
+            PopupMenuItem(
+              value: 'eliminar',
+              child: Text('Eliminar'),
+            ),
+          ],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${entrada ? '+' : '-'}${moeda((m['valor'] as num).toDouble())}',
+                style: TextStyle(
+                  color: cor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+              const Icon(Icons.more_horiz, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget paginaMovimentos() {
+    final lista = movimentos.where((m) {
+      if (filtro == 'Todos') return true;
+      return m['tipo'] == filtro;
+    }).toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Histórico de movimentos',
+                  style: TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              DropdownButton<String>(
+                value: filtro,
+                items: const [
+                  DropdownMenuItem(value: 'Todos', child: Text('Todos')),
+                  DropdownMenuItem(value: 'Entrada', child: Text('Entradas')),
+                  DropdownMenuItem(value: 'Saída', child: Text('Saídas')),
+                ],
+                onChanged: (v) {
+                  if (v != null) setState(() => filtro = v);
+                },
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: lista.isEmpty
+              ? const Center(
+                  child: Text('Não existem movimentos nesta categoria.'),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: lista.length,
+                  itemBuilder: (context, index) {
+                    return cartaoMovimento(lista[index]);
+                  },
+                ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: () => abrirFormulario(),
+              icon: const Icon(Icons.add),
+              label: const Text('Registar movimento'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: verde,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget paginaDefinicoes() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          'Definições',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 18),
+        Card(
+          color: Colors.white,
+          child: ListTile(
+            leading: const Icon(Icons.lock_outline, color: verde),
+            title: const Text('Alterar PIN de segurança'),
+            subtitle: const Text('Actualizar o código de acesso'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: alterarPin,
+          ),
+        ),
+        Card(
+          color: Colors.white,
+          child: ListTile(
+            leading: const Icon(Icons.info_outline, color: verde),
+            title: const Text('Sobre a KONTA'),
+            subtitle: const Text('Versão 2.0'),
+          ),
+        ),
+        const SizedBox(height: 30),
+        const Center(
+          child: Text(
+            'KONTA 2.0',
+            style: TextStyle(
+              color: verde,
+              fontSize: 23,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Center(
+          child: Text(
+            'Desenvolvido por Emanuel Azevedo',
+            style: TextStyle(color: Colors.grey),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> alterarPin() async {
+    final atual = TextEditingController();
+    final novo = TextEditingController();
+    final confirmar = TextEditingController();
+
+    final resultado = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Alterar PIN'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: atual,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 4,
+                decoration: const InputDecoration(labelText: 'PIN actual'),
+              ),
+              TextField(
+                controller: novo,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 4,
+                decoration: const InputDecoration(labelText: 'Novo PIN'),
+              ),
+              TextField(
+                controller: confirmar,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Confirmar novo PIN',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final guardado =
+                  await armazenamentoSeguro.read(key: 'konta_pin');
+
+              if (atual.text.trim() != guardado) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('PIN actual incorrecto.')),
+                );
+                return;
+              }
+
+              if (novo.text.length != 4 ||
+                  int.tryParse(novo.text) == null ||
+                  novo.text != confirmar.text) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Verifique o novo PIN de 4 dígitos.'),
+                  ),
+                );
+                return;
+              }
+
+              await armazenamentoSeguro.write(
+                key: 'konta_pin',
+                value: novo.text,
+              );
+
+              if (context.mounted) Navigator.pop(context, true);
+            },
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+
+    atual.dispose();
+    novo.dispose();
+    confirmar.dispose();
+
+    if (resultado == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('PIN alterado com sucesso.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (aCarregar) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final paginas = [
+      painelInicio(),
+      paginaMovimentos(),
+      paginaDefinicoes(),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'KONTA 2.0',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
+      body: IndexedStack(
+        index: pagina,
+        children: paginas,
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: pagina,
+        onDestinationSelected: (index) {
+          setState(() => pagina = index);
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: 'Início',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long_outlined),
+            selectedIcon: Icon(Icons.receipt_long),
+            label: 'Movimentos',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Definições',
+          ),
+        ],
+      ),
+    );
+  }
+}
