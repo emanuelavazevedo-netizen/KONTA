@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
@@ -9,20 +8,28 @@ const Color verde = Color(0xFF087F5B);
 const Color fundo = Color(0xFFF3F7F5);
 const FlutterSecureStorage armazenamentoSeguro = FlutterSecureStorage();
 
+final NumberFormat formatoMoeda = NumberFormat('#,##0.00', 'pt_PT');
+final DateFormat formatoData = DateFormat('dd/MM/yyyy');
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await KontaDatabase.database;
   runApp(const KontaApp());
 }
 
-// Mantém a base de dados, tabela e versão usadas pela versão anterior.
+// ======================================================
+// BASE DE DADOS
+// ======================================================
+
 class KontaDatabase {
-  static Database? _db;
+  static Database? _database;
 
   static Future<Database> get database async {
-    if (_db != null) return _db!;
+    if (_database != null) return _database!;
+
     final caminho = p.join(await getDatabasesPath(), 'konta.db');
-    _db = await openDatabase(
+
+    _database = await openDatabase(
       caminho,
       version: 2,
       onCreate: (db, version) async {
@@ -33,19 +40,13 @@ class KontaDatabase {
             descricao TEXT NOT NULL,
             valor REAL NOT NULL,
             data TEXT NOT NULL,
-            categoria TEXT NOT NULL DEFAULT 'Outros'
+            categoria TEXT
           )
         ''');
       },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          await db.execute(
-            "ALTER TABLE movimentos ADD COLUMN categoria TEXT NOT NULL DEFAULT 'Outros'",
-          );
-        }
-      },
     );
-    return _db!;
+
+    return _database!;
   }
 
   static Future<List<Map<String, dynamic>>> listar() async {
@@ -53,33 +54,37 @@ class KontaDatabase {
     return db.query('movimentos', orderBy: 'id DESC');
   }
 
-  static Future<void> guardar({
-    int? id,
-    required String tipo,
-    required String descricao,
-    required double valor,
-    required String categoria,
-  }) async {
+  static Future<int> inserir(Map<String, dynamic> movimento) async {
     final db = await database;
-    final Map<String, Object?> dados = {
-      'tipo': tipo,
-      'descricao': descricao,
-      'valor': valor,
-      'categoria': categoria,
-    };
-    if (id == null) {
-      dados['data'] = DateTime.now().toIso8601String();
-      await db.insert('movimentos', dados);
-    } else {
-      await db.update('movimentos', dados, where: 'id = ?', whereArgs: [id]);
-    }
+    return db.insert('movimentos', movimento);
   }
 
-  static Future<void> eliminar(int id) async {
+  static Future<int> atualizar(
+    int id,
+    Map<String, dynamic> movimento,
+  ) async {
     final db = await database;
-    await db.delete('movimentos', where: 'id = ?', whereArgs: [id]);
+    return db.update(
+      'movimentos',
+      movimento,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<int> eliminar(int id) async {
+    final db = await database;
+    return db.delete(
+      'movimentos',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 }
+
+// ======================================================
+// APLICAÇÃO
+// ======================================================
 
 class KontaApp extends StatelessWidget {
   const KontaApp({super.key});
@@ -87,27 +92,26 @@ class KontaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'KONTA 2.0',
       debugShowCheckedModeBanner: false,
-      title: 'KONTA',
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: verde, primary: verde),
         scaffoldBackgroundColor: fundo,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: verde,
+          primary: verde,
+          surface: Colors.white,
+        ),
         appBarTheme: const AppBarTheme(
           backgroundColor: verde,
           foregroundColor: Colors.white,
-        ),
-        cardTheme: CardThemeData(
-          color: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          centerTitle: false,
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: fundo,
+          fillColor: Colors.white,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
           ),
         ),
       ),
@@ -115,6 +119,10 @@ class KontaApp extends StatelessWidget {
     );
   }
 }
+
+// ======================================================
+// ACESSO E CONFIGURAÇÃO DO PIN
+// ======================================================
 
 class AcessoKonta extends StatefulWidget {
   const AcessoKonta({super.key});
@@ -124,17 +132,80 @@ class AcessoKonta extends StatefulWidget {
 }
 
 class _AcessoKontaState extends State<AcessoKonta> {
-  final pinController = TextEditingController();
-  final confirmarController = TextEditingController();
-  bool carregando = true;
-  bool configuracao = false;
-  bool confirmar = false;
+  final TextEditingController pinController = TextEditingController();
+  final TextEditingController confirmarController =
+      TextEditingController();
+
   String? pinGuardado;
+  bool aCarregar = true;
+  bool criarPin = false;
+  bool confirmarPin = false;
+  String mensagem = '';
 
   @override
   void initState() {
     super.initState();
     verificarPin();
+  }
+
+  Future<void> verificarPin() async {
+    final pin = await armazenamentoSeguro.read(key: 'konta_pin');
+
+    if (!mounted) return;
+
+    setState(() {
+      pinGuardado = pin;
+      criarPin = pin == null;
+      aCarregar = false;
+    });
+  }
+
+  Future<void> entrarOuCriar() async {
+    final pin = pinController.text.trim();
+
+    if (pin.length != 4 || int.tryParse(pin) == null) {
+      setState(() => mensagem = 'Introduza um PIN de 4 números.');
+      return;
+    }
+
+    if (criarPin) {
+      if (!confirmarPin) {
+        setState(() {
+          confirmarPin = true;
+          mensagem = 'Confirme o seu PIN.';
+        });
+        return;
+      }
+
+      if (pin != confirmarController.text.trim()) {
+        setState(() => mensagem = 'Os PINs não coincidem.');
+        return;
+      }
+
+      await armazenamentoSeguro.write(
+        key: 'konta_pin',
+        value: pin,
+      );
+
+      abrirAplicacao();
+      return;
+    }
+
+    if (pin == pinGuardado) {
+      abrirAplicacao();
+    } else {
+      setState(() => mensagem = 'PIN incorrecto. Tente novamente.');
+      pinController.clear();
+    }
+  }
+
+  void abrirAplicacao() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const PainelKonta(),
+      ),
+    );
   }
 
   @override
@@ -144,64 +215,11 @@ class _AcessoKontaState extends State<AcessoKonta> {
     super.dispose();
   }
 
-  Future<void> verificarPin() async {
-    pinGuardado = await armazenamentoSeguro.read(key: 'konta_pin');
-    if (!mounted) return;
-    setState(() {
-      configuracao = pinGuardado == null;
-      carregando = false;
-    });
-  }
-
-  Future<void> entrar() async {
-    final pin = pinController.text;
-    if (pin.length != 6) {
-      mensagem('Introduza os 6 dígitos.');
-      return;
-    }
-
-    if (configuracao) {
-      if (!confirmar) {
-        confirmarController.text = pin;
-        pinController.clear();
-        setState(() => confirmar = true);
-        return;
-      }
-      if (pin != confirmarController.text) {
-        mensagem('Os PIN não coincidem. Tente novamente.');
-        pinController.clear();
-        return;
-      }
-      await armazenamentoSeguro.write(key: 'konta_pin', value: pin);
-      if (!mounted) return;
-      abrirPainel();
-      return;
-    }
-
-    if (pin == pinGuardado) {
-      abrirPainel();
-    } else {
-      mensagem('PIN incorrecto. Tente novamente.');
-      pinController.clear();
-    }
-  }
-
-  void abrirPainel() {
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const PainelKonta()),
-    );
-  }
-
-  void mensagem(String texto) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(texto)));
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (carregando) {
+    if (aCarregar) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator(color: verde)),
+        body: Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -209,502 +227,108 @@ class _AcessoKontaState extends State<AcessoKonta> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: verde,
-                    borderRadius: BorderRadius.circular(22),
-                  ),
-                  child: const Icon(Icons.account_balance_wallet, size: 48, color: Colors.white),
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  'KONTA',
-                  style: TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: verde),
-                ),
-                const Text(
-                  'GESTÃO FINANCEIRA INTELIGENTE',
-                  style: TextStyle(fontSize: 11, letterSpacing: 1.5, color: Colors.grey),
-                ),
-                const SizedBox(height: 45),
-                Text(
-                  configuracao
-                      ? (confirmar ? 'Confirme o seu PIN' : 'Crie o seu PIN de acesso')
-                      : 'Bem-vindo de volta',
-                  style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  configuracao
-                      ? 'Escolha um código pessoal de 6 dígitos.'
-                      : 'Introduza o PIN para entrar na KONTA.',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.grey),
-                ),
-                const SizedBox(height: 25),
-                SizedBox(
-                  width: 220,
-                  child: TextField(
-                    controller: pinController,
-                    obscureText: true,
-                    maxLength: 6,
-                    keyboardType: TextInputType.number,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 27, letterSpacing: 12),
-                    decoration: const InputDecoration(hintText: '••••••', counterText: ''),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(backgroundColor: verde),
-                    onPressed: entrar,
-                    child: Text(configuracao ? 'Continuar' : 'Entrar'),
-                  ),
-                ),
-                const SizedBox(height: 60),
-                const Text('Desenvolvido por', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                const Text('Emanuel Azevedo', style: TextStyle(color: verde, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 5),
-                const Text('© 2026 KONTA', style: TextStyle(color: Colors.grey, fontSize: 11)),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class PainelKonta extends StatefulWidget {
-  const PainelKonta({super.key});
-
-  @override
-  State<PainelKonta> createState() => _PainelKontaState();
-}
-
-class _PainelKontaState extends State<PainelKonta> {
-  List<Map<String, dynamic>> movimentos = [];
-  String periodo = 'Todos';
-  int pagina = 0;
-  bool ocultarSaldo = false;
-  final formato = NumberFormat('#,##0.00', 'pt_PT');
-
-  String dinheiro(double valor) => '${formato.format(valor)} Kz';
-
-  @override
-  void initState() {
-    super.initState();
-    carregar();
-  }
-
-  Future<void> carregar() async {
-    final dados = await KontaDatabase.listar();
-    if (!mounted) return;
-    setState(() => movimentos = dados);
-  }
-
-  List<Map<String, dynamic>> get filtrados {
-    final agora = DateTime.now();
-    return movimentos.where((m) {
-      final data = DateTime.tryParse(m['data']?.toString() ?? '');
-      if (data == null) return false;
-      if (periodo == 'Hoje') {
-        return data.year == agora.year && data.month == agora.month && data.day == agora.day;
-      }
-      if (periodo == 'Este mês') {
-        return data.year == agora.year && data.month == agora.month;
-      }
-      return true;
-    }).toList();
-  }
-
-  double total(String tipo) {
-    return filtrados
-        .where((m) => m['tipo'] == tipo)
-        .fold<double>(0, (soma, m) => soma + (m['valor'] as num).toDouble());
-  }
-
-  double get receitas => total('Entrada');
-  double get despesas => total('Saída');
-  double get saldo => receitas - despesas;
-
-  Future<void> novoMovimento({Map<String, dynamic>? movimento}) async {
-    final descricao = TextEditingController(text: movimento?['descricao']?.toString() ?? '');
-    final valor = TextEditingController(
-      text: movimento == null ? '' : (movimento['valor'] as num).toString(),
-    );
-    String tipo = movimento?['tipo']?.toString() ?? 'Entrada';
-    String categoria = movimento?['categoria']?.toString() ?? 'Outros';
-    const categorias = [
-      'Vendas', 'Serviços', 'Investimentos', 'Alimentação', 'Transporte',
-      'Salários', 'Renda', 'Compras', 'Energia', 'Água', 'Outros',
-    ];
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, atualizar) => AlertDialog(
-          title: Text(movimento == null ? 'Novo movimento' : 'Editar movimento'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  value: tipo,
-                  decoration: const InputDecoration(labelText: 'Tipo'),
-                  items: const [
-                    DropdownMenuItem(value: 'Entrada', child: Text('Receita / Entrada')),
-                    DropdownMenuItem(value: 'Saída', child: Text('Despesa / Saída')),
-                  ],
-                  onChanged: (v) { if (v != null) atualizar(() => tipo = v); },
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: categoria,
-                  decoration: const InputDecoration(labelText: 'Categoria'),
-                  items: categorias.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                  onChanged: (v) { if (v != null) atualizar(() => categoria = v); },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: descricao,
-                  decoration: const InputDecoration(labelText: 'Descrição', hintText: 'Ex.: Venda de mercadoria'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: valor,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'Valor em Kz'),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-            FilledButton(
-              onPressed: () async {
-                final numero = double.tryParse(valor.text.trim().replaceAll(',', '.'));
-                if (descricao.text.trim().isEmpty || numero == null || numero <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Verifique a descrição e o valor.')),
-                  );
-                  return;
-                }
-                await KontaDatabase.guardar(
-                  id: movimento?['id'] as int?,
-                  tipo: tipo,
-                  descricao: descricao.text.trim(),
-                  valor: numero,
-                  categoria: categoria,
-                );
-                if (ctx.mounted) Navigator.pop(ctx);
-                await carregar();
-              },
-              child: const Text('Guardar'),
-            ),
-          ],
-        ),
-      ),
-    );
-    descricao.dispose();
-    valor.dispose();
-  }
-
-  Future<void> eliminarMovimento(int id) async {
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar movimento?'),
-        content: const Text('Esta operação não poderá ser desfeita.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Eliminar')),
-        ],
-      ),
-    );
-    if (confirmar == true) {
-      await KontaDatabase.eliminar(id);
-      await carregar();
-    }
-  }
-
-  Future<void> alterarPin() async {
-    final atual = TextEditingController();
-    final novo = TextEditingController();
-    final confirmar = TextEditingController();
-    final resultado = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Alterar PIN'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: atual, obscureText: true, keyboardType: TextInputType.number, maxLength: 6, decoration: const InputDecoration(labelText: 'PIN actual')),
-              TextField(controller: novo, obscureText: true, keyboardType: TextInputType.number, maxLength: 6, decoration: const InputDecoration(labelText: 'Novo PIN')),
-              TextField(controller: confirmar, obscureText: true, keyboardType: TextInputType.number, maxLength: 6, decoration: const InputDecoration(labelText: 'Confirmar PIN')),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Guardar')),
-        ],
-      ),
-    );
-
-    if (resultado == true) {
-      final guardado = await armazenamentoSeguro.read(key: 'konta_pin');
-      if (atual.text == guardado && novo.text.length == 6 && novo.text == confirmar.text) {
-        await armazenamentoSeguro.write(key: 'konta_pin', value: novo.text);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('PIN alterado com sucesso.')),
-          );
-        }
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Dados do PIN inválidos.')),
-        );
-      }
-    }
-    atual.dispose();
-    novo.dispose();
-    confirmar.dispose();
-  }
-
-  Widget cartao(String titulo, double valor, Color cor, IconData icone) {
-    return Expanded(
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icone, color: cor, size: 24),
-              const SizedBox(height: 10),
-              Text(titulo, style: const TextStyle(color: Colors.grey)),
-              const SizedBox(height: 5),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  ocultarSaldo ? '••••••' : dinheiro(valor),
-                  style: TextStyle(color: cor, fontWeight: FontWeight.bold, fontSize: 17),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget itemMovimento(Map<String, dynamic> item) {
-    final entrada = item['tipo'] == 'Entrada';
-    final valor = (item['valor'] as num).toDouble();
-    final data = DateTime.tryParse(item['data']?.toString() ?? '');
-    return Card(
-      child: ListTile(
-        onTap: () => novoMovimento(movimento: item),
-        leading: CircleAvatar(
-          backgroundColor: entrada ? Colors.green.shade50 : Colors.red.shade50,
-          child: Icon(entrada ? Icons.add : Icons.remove, color: entrada ? Colors.green : Colors.red),
-        ),
-        title: Text(item['descricao']?.toString() ?? ''),
-        subtitle: Text('${item['categoria'] ?? 'Outros'} • ${data == null ? '' : DateFormat('dd/MM/yyyy HH:mm').format(data)}'),
-        trailing: Text(
-          '${entrada ? '+' : '-'}${dinheiro(valor)}',
-          style: TextStyle(fontWeight: FontWeight.bold, color: entrada ? Colors.green : Colors.red),
-        ),
-      ),
-    );
-  }
-
-  Widget painelInicio() {
-    final recentes = movimentos.take(8).toList();
-    return RefreshIndicator(
-      onRefresh: carregar,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Olá, bem-vindo!', style: TextStyle(fontSize: 14, color: Colors.grey)),
-                    Text('Resumo financeiro', style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: () => setState(() => ocultarSaldo = !ocultarSaldo),
-                icon: Icon(ocultarSaldo ? Icons.visibility_off : Icons.visibility, color: verde),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Card(
-            color: verde,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text('SALDO DISPONÍVEL', style: TextStyle(color: Colors.white70, letterSpacing: 1)),
-                  const SizedBox(height: 10),
-                  Text(
-                    ocultarSaldo ? '••••••••' : dinheiro(saldo),
-                    style: const TextStyle(color: Colors.white, fontSize: 27, fontWeight: FontWeight.bold),
+                  Container(
+                    width: 90,
+                    height: 90,
+                    decoration: BoxDecoration(
+                      color: verde,
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                    child: const Icon(
+                      Icons.account_balance_wallet,
+                      color: Colors.white,
+                      size: 48,
+                    ),
                   ),
-                  const SizedBox(height: 6),
-                  const Text('Receitas menos despesas registadas', style: TextStyle(color: Colors.white70)),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'KONTA 2.0',
+                    style: TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                      color: verde,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    criarPin
+                        ? 'Crie um PIN de segurança'
+                        : 'Introduza o seu PIN para entrar',
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 28),
+                  TextField(
+                    controller: pinController,
+                    keyboardType: TextInputType.number,
+                    obscureText: true,
+                    maxLength: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'PIN de 4 dígitos',
+                      prefixIcon: Icon(Icons.lock_outline),
+                      counterText: '',
+                    ),
+                  ),
+                  if (criarPin && confirmarPin) ...[
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: confirmarController,
+                      keyboardType: TextInputType.number,
+                      obscureText: true,
+                      maxLength: 4,
+                      decoration: const InputDecoration(
+                        labelText: 'Confirmar PIN',
+                        prefixIcon: Icon(Icons.lock_reset),
+                        counterText: '',
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  if (mensagem.isNotEmpty)
+                    Text(
+                      mensagem,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: entrarOuCriar,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: verde,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        criarPin ? 'Continuar' : 'Entrar',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 35),
+                  const Text(
+                    'Desenvolvido por Emanuel Azevedo',
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 12,
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              cartao('Receitas', receitas, Colors.green, Icons.trending_up),
-              cartao('Despesas', despesas, Colors.red, Icons.trending_down),
-            ],
-          ),
-          const SizedBox(height: 24),
-          const Text('MOVIMENTOS RECENTES', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
-          const SizedBox(height: 10),
-          if (recentes.isEmpty)
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Column(
-                  children: [
-                    Icon(Icons.account_balance_wallet_outlined, size: 42, color: Colors.grey),
-                    SizedBox(height: 12),
-                    Text('Ainda não existem movimentos.', style: TextStyle(color: Colors.grey)),
-                    Text('Registe a primeira receita ou despesa.', style: TextStyle(color: Colors.grey)),
-                  ],
-                ),
-              ),
-            ),
-          ...recentes.map(itemMovimento),
-          const SizedBox(height: 90),
-        ],
-      ),
-    );
-  }
-
-  Widget paginaMovimentos() {
-    return RefreshIndicator(
-      onRefresh: carregar,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
-        children: [
-          const Text('Movimentos', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 14),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'Todos', label: Text('Todos')),
-              ButtonSegment(value: 'Hoje', label: Text('Hoje')),
-              ButtonSegment(value: 'Este mês', label: Text('Este mês')),
-            ],
-            selected: {periodo},
-            onSelectionChanged: (selecionado) => setState(() => periodo = selecionado.first),
-          ),
-          const SizedBox(height: 14),
-          if (filtrados.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(28),
-              child: Center(child: Text('Não existem movimentos neste período.')),
-            ),
-          ...filtrados.map((item) => Dismissible(
-                key: ValueKey(item['id']),
-                direction: DismissDirection.endToStart,
-                background: Container(
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.only(right: 20),
-                  margin: const EdgeInsets.symmetric(vertical: 4),
-                  decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(16)),
-                  child: const Icon(Icons.delete, color: Colors.white),
-                ),
-                confirmDismiss: (_) async {
-                  await eliminarMovimento(item['id'] as int);
-                  return false;
-                },
-                child: itemMovimento(item),
-              )),
-        ],
-      ),
-    );
-  }
-
-  Widget paginaDefinicoes() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const Text('Definições', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 16),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.lock_outline, color: verde),
-            title: const Text('Alterar PIN de acesso'),
-            subtitle: const Text('Actualizar o código de seis dígitos'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: alterarPin,
-          ),
         ),
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.person_outline, color: verde),
-            title: Text('Desenvolvido por'),
-            subtitle: Text('Emanuel Azevedo'),
-          ),
-        ),
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.info_outline, color: verde),
-            title: Text('KONTA'),
-            subtitle: Text('Gestão financeira inteligente • Versão 2'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const titulos = ['KONTA', 'Movimentos', 'Definições'];
-    return Scaffold(
-      appBar: AppBar(title: Text(titulos[pagina])),
-      body: IndexedStack(
-        index: pagina,
-        children: [painelInicio(), paginaMovimentos(), paginaDefinicoes()],
-      ),
-      floatingActionButton: pagina == 2
-          ? null
-          : FloatingActionButton(
-              backgroundColor: verde,
-              foregroundColor: Colors.white,
-              onPressed: () => novoMovimento(),
-              child: const Icon(Icons.add),
-            ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: pagina,
-        onDestinationSelected: (index) => setState(() => pagina = index),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Início'),
-          NavigationDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: 'Movimentos'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Definições'),
-        ],
       ),
     );
   }
