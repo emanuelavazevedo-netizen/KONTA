@@ -919,3 +919,228 @@ class _PainelKontaState extends State<PainelKonta> {
     );
   }
 }
+// ======================================================
+// FORMULÁRIO DE REGISTO E EDIÇÃO
+// ======================================================
+
+class DialogoMovimento extends StatefulWidget {
+  final Map<String, dynamic>? movimento;
+
+  const DialogoMovimento({
+    super.key,
+    this.movimento,
+  });
+
+  @override
+  State<DialogoMovimento> createState() => _DialogoMovimentoState();
+}
+
+class _DialogoMovimentoState extends State<DialogoMovimento> {
+  final descricaoController = TextEditingController();
+  final valorController = TextEditingController();
+
+  String tipo = 'Entrada';
+  String categoria = 'Geral';
+  bool aGuardar = false;
+
+  final List<String> categorias = [
+    'Geral',
+    'Salário',
+    'Vendas',
+    'Alimentação',
+    'Transporte',
+    'Habitação',
+    'Saúde',
+    'Educação',
+    'Serviços',
+    'Outros',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+
+    final m = widget.movimento;
+
+    if (m != null) {
+      tipo = m['tipo']?.toString() ?? 'Entrada';
+      categoria = m['categoria']?.toString() ?? 'Geral';
+      descricaoController.text = m['descricao']?.toString() ?? '';
+      valorController.text = m['valor']?.toString() ?? '';
+    }
+  }
+
+  @override
+  void dispose() {
+    descricaoController.dispose();
+    valorController.dispose();
+    super.dispose();
+  }
+
+  Future<void> guardar() async {
+    final descricao = descricaoController.text.trim();
+    final valorTexto = valorController.text.trim().replaceAll(',', '.');
+    final valor = double.tryParse(valorTexto);
+
+    if (descricao.isEmpty || valor == null || valor <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Preencha a descrição e um valor válido.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => aGuardar = true);
+
+    final dados = <String, dynamic>{
+      'tipo': tipo,
+      'descricao': descricao,
+      'valor': valor,
+      'categoria': categoria,
+      'data': widget.movimento?['data'] ??
+          formatoData.format(DateTime.now()),
+    };
+
+    try {
+      if (widget.movimento == null) {
+        await KontaDatabase.inserir(dados);
+      } else {
+        await KontaDatabase.atualizar(
+          (widget.movimento!['id'] as num).toInt(),
+          dados,
+        );
+      }
+
+      if (!mounted) return;
+
+      Navigator.pop(context);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.movimento == null
+                ? 'Movimento registado com sucesso!'
+                : 'Movimento actualizado com sucesso!',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() => aGuardar = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao guardar: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final editando = widget.movimento != null;
+
+    return AlertDialog(
+      title: Text(
+        editando ? 'Editar movimento' : 'Novo movimento',
+        style: const TextStyle(
+          color: verde,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      content: SingleChildScrollView(
+        child: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                value: tipo,
+                decoration: const InputDecoration(
+                  labelText: 'Tipo de movimento',
+                  prefixIcon: Icon(Icons.swap_vert),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'Entrada',
+                    child: Text('Entrada'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Saída',
+                    child: Text('Saída'),
+                  ),
+                ],
+                onChanged: (valor) {
+                  if (valor != null) {
+                    setState(() => tipo = valor);
+                  }
+                },
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: descricaoController,
+                decoration: const InputDecoration(
+                  labelText: 'Descrição',
+                  prefixIcon: Icon(Icons.description_outlined),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: valorController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Valor em Kz',
+                  prefixIcon: Icon(Icons.payments_outlined),
+                ),
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                value: categorias.contains(categoria) ? categoria : 'Geral',
+                decoration: const InputDecoration(
+                  labelText: 'Categoria',
+                  prefixIcon: Icon(Icons.category_outlined),
+                ),
+                items: categorias.map((c) {
+                  return DropdownMenuItem(
+                    value: c,
+                    child: Text(c),
+                  );
+                }).toList(),
+                onChanged: (valor) {
+                  if (valor != null) {
+                    setState(() => categoria = valor);
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: aGuardar ? null : () => Navigator.pop(context),
+          child: const Text('Cancelar'),
+        ),
+        ElevatedButton(
+          onPressed: aGuardar ? null : guardar,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: verde,
+            foregroundColor: Colors.white,
+          ),
+          child: aGuardar
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+              : const Text('Guardar'),
+        ),
+      ],
+    );
+  }
+}
